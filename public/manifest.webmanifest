@@ -1,0 +1,44 @@
+{
+  "name": "PRATIBIMB — Check a suspicious investment message",
+  "short_name": "PRATIBIMB",
+  "description": "Paste a suspicious investment message. See the exact words that match known pressure tactics, and get a safe next step. Works offline. No investment advice.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#060a13",
+  "theme_color": "#060a13",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["finance", "education", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Check a message",
+      "short_name": "Check",
+      "description": "Paste a suspicious message to check",
+      "url": "/investigate?source=shortcut",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
