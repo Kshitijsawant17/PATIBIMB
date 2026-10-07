@@ -34,68 +34,78 @@ Suspicious WhatsApp message
 
 ### 1. Investigation Engine
 - Deterministic rule-based analysis (no AI, no APIs)
-- One-click fictional sample demo; paste your own message to run the same flow
-- Screenshot upload, drag/drop and clipboard image OCR using locally bundled Tesseract.js
-- Public web-page URL extraction through a safety-bounded server route
-- 31 manipulation pattern detection rules
+- One-click fictional sample demo; paste text, upload an English screenshot (read on-device) or check a link
+- Deterministic English, Hinglish, Hindi and Marathi rules (English rules R01–R32 first, regional rules after)
 - 8 signal categories: authority, urgency, social-proof, unrealistic-outcome, guaranteed-language, impersonation, payment-pressure, withdrawal-pressure
 - Evidence status assessment for each claim
 - Transparent risk score: each detected tactic is counted **once** at its strongest severity, and the results screen shows exactly which tactics contributed how much
 
-### 2. Image + URL Extraction
-- Screenshot OCR runs locally in the browser with bundled English, Hindi and Marathi language data
-- Images are preprocessed for contrast before OCR
-- URL mode extracts readable HTML/text on the server with size, redirect and private-network guards
-- Extracted text is always shown to the user before investigation
-
-### 3. Cited Evidence
+### 2. Cited Evidence
 Every signal carries a stable rule ID (`R01`…`R31`) and the **exact character range** of its match in the submitted message.
 - Quoted words are highlighted in context, not paraphrased
 - Offsets are verifiable: the highlight always matches the text you pasted
 - Context windows are surrogate-safe, so emoji and Indic scripts are not split
 - "How this works" explains the whole pipeline on the results screen
 
-### 4. Structured Extraction
+### 3. Structured Extraction
 A second, independent set of patterns copies out literal details from the message:
 - Amounts (`₹10,000`, `Rs 25000`), percentages, deadlines/urgency phrases, and possible payment handles
 - Each extraction keeps its own source anchor, so it is traceable to the original text
 - Labelled as **extraction, not verification** — a stated figure is not a true one
 - A payment-handle pattern must sit near payment wording, so an ordinary support email is not mislabelled
 
-### 5. Signal-Driven Recommendations
+### 4. Signal-Driven Recommendations
 - Next steps are generated only from the categories that actually matched
 - Each recommendation cites the phrases and extracted details that triggered it, with working in-page links
 - Fixed safety guidance (pause, verify independently, report). Not investment advice, and never a fraud verdict
 
-### 6. Manipulation Map
+### 5. Manipulation Map
 - Interactive visualization of detected signals
 - Click each signal to understand what it does
 - Rule ID and surrounding message text shown for the selected signal
 - Simple-language explanations for Tier-2/3 users
 - Clear distinction: "detected signal" vs "verified fact"
 
-### 7. Reality Replay
+### 6. Reality Replay
 - Cinematic step-by-step simulation
 - Branching scenarios based on detected signals
 - "SIMULATION — NOT A PREDICTION" disclaimer
 - Pattern recognition at the end
 
-### 8. Teach-Back Analysis
+### 7. Teach-Back Analysis
 - Keyword-based reasoning detection
 - Identifies why the message felt trustworthy
 - Interactive verification checklist
 - "Can you verify that claim independently?" prompt
 
-### 9. Recovery Mode
+### 8. Recovery Mode
 - Evidence preservation checklist (8 items)
 - Auto-generated incident timeline
 - Printable incident summary report that carries the analysed message forward
 - Official reporting channel links
 
-### 10. Demo Mode
+### 9. Demo Mode
 - One-click guided journey for judges
 - Persistent step navigation (01 INPUT → 02 INVESTIGATE → 03 UNDERSTAND → 04 REPLAY → 05 LEARN)
 - Trust indicators: "No investment advice" + "Your decision stays yours"
+
+## Input modes
+
+| Mode | How it works | Limits |
+|------|--------------|--------|
+| Text | Pasted or spoken text goes straight to the rule engine | – |
+| Screenshot | On-device OCR (`public/ocr`, self-hosted tesseract.js, English model). The text is placed in the editor for the person to check before investigating | English only; can misread text |
+| Link | `lib/engine/url-inspector.ts` reads the address text only (IP hosts, shorteners, regulator look-alikes, `@` tricks, http). The link is never opened | Says nothing about the page itself |
+
+## Checks
+
+```
+npm run check:engine   # engine, teach-back and link-check regression checks
+npm run vendor:ocr     # refresh public/ocr after upgrading tesseract.js
+```
+
+## Honest limits
+No live registry checks, finite rule coverage, English-only screenshot reading, Marathi rule explanations (`i18n/content/mr.ts`) need native-speaker review, and no user study has been run. See `/about`.
 
 ## Architecture
 

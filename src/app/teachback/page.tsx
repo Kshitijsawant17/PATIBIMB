@@ -26,7 +26,14 @@ import Reveal from "@/components/ui/Reveal";
 import ReadAloudButton from "@/components/voice/ReadAloudButton";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import { analyzeTeachBack, type TeachBackAnalysis } from "@/lib/engine/teachback-analyzer";
+import {
+  analyzeTeachBack,
+  REASON_CATEGORY,
+  REASONING_LABELS,
+  type ReasonId,
+  type TeachBackAnalysis,
+} from "@/lib/engine/teachback-analyzer";
+import { getTeachbackChecklistText, getTeachbackLabel } from "@/lib/i18n/content";
 import { STORAGE_KEYS, writeSessionJSON } from "@/lib/storage";
 import { useDemo } from "@/lib/demo/DemoContext";
 import { useSettings, useT } from "@/lib/i18n/SettingsContext";
@@ -46,13 +53,13 @@ const emotionOptions: Array<{ id: string; icon: LucideIcon; key: string }> = [
   { id: "other", icon: Brain, key: "other" },
 ];
 
-/** Why the message felt trustworthy. These map to the analyzer's categories. */
-const reasonOptions: Array<{ id: string; icon: LucideIcon; category: string }> = [
-  { id: "official", icon: Landmark, category: "authority" },
-  { id: "returns", icon: TrendingUp, category: "guaranteed-language" },
-  { id: "urgent", icon: Clock, category: "urgency" },
-  { id: "others", icon: Users, category: "social-proof" },
-  { id: "notime", icon: Wallet, category: "payment-pressure" },
+/** Why the message felt trustworthy. The category comes from the analyzer, so there is one mapping. */
+const reasonOptions: Array<{ id: ReasonId; icon: LucideIcon }> = [
+  { id: "official", icon: Landmark },
+  { id: "returns", icon: TrendingUp },
+  { id: "urgent", icon: Clock },
+  { id: "others", icon: Users },
+  { id: "notime", icon: Wallet },
 ];
 
 export default function TeachBackPage() {
@@ -63,23 +70,26 @@ export default function TeachBackPage() {
 
   const [response, setResponse] = useState("");
   const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null);
-  const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [selectedReasons, setSelectedReasons] = useState<ReasonId[]>([]);
   const [analysis, setAnalysis] = useState<TeachBackAnalysis | null>(null);
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
 
-  const toggleReason = (id: string) =>
+  const toggleReason = (id: ReasonId) =>
     setSelectedReasons((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
 
   const handleSubmit = () => {
-    // A chip-only answer still counts: the selected reasons become the text
-    // that gets analysed, so nothing the user chose is discarded.
-    const combined =
-      response.trim() ||
-      selectedReasons.map((id) => t.teachback.reasons[id]).filter(Boolean).join(". ");
+    // Chips are analysed by their stable id, so the result is the same in every
+    // language. The chip text is only used to show the person what they chose.
+    const typed = response.trim();
+    const shown =
+      typed || selectedReasons.map((id) => t.teachback.reasons[id]).filter(Boolean).join(". ");
 
-    if (!combined.trim()) return;
-    setResponse(combined);
-    setAnalysis(analyzeTeachBack(combined));
+    if (!shown.trim()) return;
+    setResponse(shown);
+    setAnalysis({
+      ...analyzeTeachBack({ reasonIds: selectedReasons, text: typed }),
+      response: shown,
+    });
   };
 
   const toggleCheckItem = (id: string) => {
@@ -118,9 +128,7 @@ export default function TeachBackPage() {
               <h1 className="heading-1 text-text-primary mb-4 text-balance">
                 {t.teachback.subtitle}
               </h1>
-              <p className="body-lg text-text-secondary">
-                Be honest. Naming the reason is the whole point.
-              </p>
+              <p className="body-lg text-text-secondary">{t.teachback.honestLine}</p>
             </Reveal>
 
             {/* Why it felt trustworthy */}
@@ -219,7 +227,7 @@ export default function TeachBackPage() {
                 <label htmlFor="teachback-input" className="heading-3 text-text-primary mb-1.5 block">
                   {t.teachback.textareaLabel}
                 </label>
-                <p className="body-base text-text-muted mb-5">Optional, but it teaches more.</p>
+                <p className="body-base text-text-muted mb-5">{t.teachback.optionalLabel}</p>
                 <textarea
                   id="teachback-input"
                   value={response}
@@ -261,13 +269,13 @@ export default function TeachBackPage() {
   }
 
   /* ===================== STEP 2: REASONING PATTERN + HABIT ===================== */
-  const spokenSummary = `${t.teachback.resultTitle}. ${analysis.reasoningLabels.join(". ")}. ${t.teachback.keyQuestion}`;
+  const patternName = (category: string) =>
+    getTeachbackLabel(locale, category, REASONING_LABELS[category as keyof typeof REASONING_LABELS] ?? category);
+  const patternNames = analysis.detectedReasoning.map(patternName);
+  const spokenSummary = `${t.teachback.resultTitle}. ${patternNames.join(". ")}. ${t.teachback.keyQuestion}`;
 
   // Habits derived from what the user actually said, most relevant first.
-  const detectedCategories = Array.from(
-    new Set([...analysis.detectedReasoning, ...reasonOptions.filter((r) => selectedReasons.includes(r.id)).map((r) => r.category)])
-  );
-  const habits = detectedCategories
+  const habits = analysis.detectedReasoning
     .map((c) => t.teachback.nextTimeAdvice[c as keyof typeof t.teachback.nextTimeAdvice])
     .filter(Boolean);
   const primaryHabit = habits[0] ?? t.teachback.defaultAdvice;
@@ -292,13 +300,13 @@ export default function TeachBackPage() {
           <Reveal delay={60}>
             <ol className="grid sm:grid-cols-3 gap-3 mb-6">
               {[
-                { step: "Reaction", tone: "text-text-tertiary", body: analysis.response.slice(0, 90) },
+                { step: t.landing.teachReaction, tone: "text-text-tertiary", body: analysis.response.slice(0, 90) },
                 {
-                  step: "Recognition",
+                  step: t.landing.teachRecognition,
                   tone: "text-cyan-400",
-                  body: analysis.reasoningLabels[0] ?? t.teachback.reasonHeading,
+                  body: patternNames[0] ?? t.teachback.reasonHeading,
                 },
-                { step: "Habit", tone: "text-emerald-400", body: primaryHabit },
+                { step: t.landing.teachHabit, tone: "text-emerald-400", body: primaryHabit },
               ].map((item, i) => (
                 <li key={item.step} className="relative">
                   {i < 2 && (
@@ -329,8 +337,8 @@ export default function TeachBackPage() {
               <p className="body-base text-text-muted mb-6">{t.teachback.resultSubtitle}</p>
 
               <div className="space-y-2.5">
-                {analysis.reasoningLabels.map((label, index) => {
-                  const category = analysis.detectedReasoning[index];
+                {analysis.detectedReasoning.map((category, index) => {
+                  const label = patternNames[index];
                   const Icon = signalIcon(category);
                   return (
                     <div
@@ -355,9 +363,6 @@ export default function TeachBackPage() {
                   );
                 })}
 
-                {analysis.reasoningLabels.length === 0 && (
-                  <p className="body-base text-text-secondary">{t.result.noMatchSubtitle}</p>
-                )}
               </div>
             </section>
           </Reveal>
@@ -462,7 +467,7 @@ export default function TeachBackPage() {
                           checked ? "text-text-muted line-through" : "text-text-primary"
                         )}
                       >
-                        {item.text}
+                        {getTeachbackChecklistText(locale, item.id, item.text)}
                       </span>
                     </button>
                   );

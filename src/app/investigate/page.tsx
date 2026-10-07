@@ -16,8 +16,6 @@ import {
   Lock,
   ScanLine,
   Layers,
-  Globe2,
-  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -27,10 +25,11 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import { useAnalysis } from "@/lib/analysis/AnalysisContext";
 import { useDemo } from "@/lib/demo/DemoContext";
-import { useSettings, useT } from "@/lib/i18n/SettingsContext";
+import { useSettings, useT, format } from "@/lib/i18n/SettingsContext";
 import { sampleMessage } from "@/lib/data/mock-data";
+import { readScreenshot, OcrError, LOW_CONFIDENCE, type OcrErrorCode } from "@/lib/ocr/readScreenshot";
+import { inspectUrl, type LinkInspection } from "@/lib/engine/url-inspector";
 import { cn } from "@/lib/utils";
-import { createWorker } from "tesseract.js";
 
 const MAX_CHARS = 20000;
 const MIN_CHARS = 10;
@@ -59,20 +58,22 @@ export default function InvestigatePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSample, setIsSample] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [ocrStatus, setOcrStatus] = useState<"idle" | "processing" | "success" | "error">("idle");
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [screenshotName, setScreenshotName] = useState("");
-  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
-  const [urlValue, setUrlValue] = useState("");
-  const [urlStatus, setUrlStatus] = useState<"idle" | "fetching" | "success" | "error">("idle");
-  const [urlError, setUrlError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    };
-  }, [imagePreviewUrl]);
+  // Screenshot reading (on-device OCR)
+  const [ocr, setOcr] = useState<
+    | { status: "idle" }
+    | { status: "working"; stage: "preparing" | "reading"; fraction: number }
+    | { status: "error"; code: OcrErrorCode }
+  >({ status: "idle" });
+  const [ocrNotice, setOcrNotice] = useState<{ confidence: number } | null>(null);
+  const lastFile = useRef<File | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Link check (address only, never opened)
+  const [linkInput, setLinkInput] = useState("");
+  const [linkResult, setLinkResult] = useState<LinkInspection | null>(null);
 
   useEffect(() => {
     if (!isReady) return;
@@ -127,150 +128,74 @@ export default function InvestigatePage() {
     else if (e.type === "dragleave") setDragActive(false);
   }, []);
 
-  const preprocessImage = useCallback(async (file: File): Promise<Blob> => {
-    const bitmap = await createImageBitmap(file);
-    const maxDimension = 2400;
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) throw new Error("Your browser could not prepare this image.");
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-
-    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    for (let i = 0; i < pixels.data.length; i += 4) {
-      const r = pixels.data[i];
-      const g = pixels.data[i + 1];
-      const b = pixels.data[i + 2];
-      const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-      const contrast = Math.max(0, Math.min(255, (gray - 128) * 1.35 + 128));
-      pixels.data[i] = contrast;
-      pixels.data[i + 1] = contrast;
-      pixels.data[i + 2] = contrast;
-    }
-    ctx.putImageData(pixels, 0, 0);
-
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not prepare the image."))), "image/png", 0.92);
-    });
-  }, []);
-
-  const acceptFile = useCallback(async (file?: File | null) => {
-    if (!file || !file.type.startsWith("image/")) {
-      setOcrStatus("error");
-      setScreenshotName("");
-      setMessage("");
-      return;
-    }
-    if (file.size > 12 * 1024 * 1024) {
-      setOcrStatus("error");
-      setScreenshotName(file.name);
-      setMessage("");
-      return;
-    }
-
-    setIsSample(false);
-    setShowValidation(false);
-    setScreenshotName(file.name);
-    setOcrStatus("processing");
-    setOcrProgress(0);
-    setMessage("");
-    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    setImagePreviewUrl(URL.createObjectURL(file));
-
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
+  const runOcr = useCallback(async (file: File) => {
+    lastFile.current = file;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setOcr({ status: "working", stage: "preparing", fraction: 0 });
+    setOcrNotice(null);
     try {
-      const language = locale === "hi" ? "eng+hin" : locale === "mr" ? "eng+mar" : "eng";
-      worker = await createWorker(language, 1, {
-        workerPath: "/tesseract/worker.min.js",
-        corePath: "/tesseract/tesseract-core-lstm.wasm.js",
-        langPath: "/tessdata/",
-        gzip: false,
-        logger: (event) => {
-          if (event.status === "recognizing text" && typeof event.progress === "number") {
-            setOcrProgress(Math.round(event.progress * 100));
-          }
-        },
+      const result = await readScreenshot(file, {
+        signal: controller.signal,
+        onProgress: (stage, fraction) => setOcr({ status: "working", stage, fraction }),
       });
-      const prepared = await preprocessImage(file);
-      const result = await worker.recognize(prepared);
-      const text = result.data.text.trim();
-
-      if (!text) {
-        setOcrStatus("error");
-        setMessage("");
-        return;
-      }
-
-      setMessage(text.slice(0, MAX_CHARS));
-      setOcrProgress(100);
-      setOcrStatus("success");
-      setActiveMode("text");
-    } catch {
-      setOcrStatus("error");
-      setMessage("");
-    } finally {
-      if (worker) await worker.terminate();
-    }
-  }, [imagePreviewUrl, locale, preprocessImage]);
-
-  useEffect(() => {
-    const onPaste = (event: ClipboardEvent) => {
-      if (activeMode !== "screenshot") return;
-      const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
-      if (image) {
-        event.preventDefault();
-        void acceptFile(image);
-      }
-    };
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  }, [activeMode, acceptFile]);
-
-  const handleUrlExtract = async () => {
-    const candidate = urlValue.trim();
-    if (!candidate) {
-      setUrlStatus("error");
-      setUrlError("Enter a web page URL first.");
-      return;
-    }
-    setUrlStatus("fetching");
-    setUrlError("");
-    try {
-      const response = await fetch("/api/extract-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: candidate }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "The page could not be extracted.");
-      setMessage(String(data.text).slice(0, MAX_CHARS));
+      // Never submit OCR output automatically: put it where the person can check and fix it.
+      setMessage(result.text);
       setIsSample(false);
       setShowValidation(false);
-      setUrlStatus("success");
+      setOcrNotice({ confidence: result.confidence });
+      setOcr({ status: "idle" });
       setActiveMode("text");
     } catch (error) {
-      setUrlStatus("error");
-      setUrlError(error instanceof Error ? error.message : "The page could not be extracted.");
+      if (error instanceof OcrError && error.code === "aborted") return;
+      setOcr({ status: "error", code: error instanceof OcrError ? error.code : "load-failed" });
     }
-  };
+  }, []);
+
+  const acceptFile = useCallback(
+    (file?: File | null) => {
+      if (file) void runOcr(file);
+    },
+    [runOcr]
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setDragActive(false);
-      void acceptFile(e.dataTransfer.files?.[0]);
+      acceptFile(e.dataTransfer.files?.[0]);
     },
     [acceptFile]
   );
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    void acceptFile(e.target.files?.[0]);
+    acceptFile(e.target.files?.[0]);
     e.target.value = "";
   };
+
+  const handleLinkCheck = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setLinkResult(inspectUrl(linkInput));
+  };
+
+  const addLinkToMessage = () => {
+    if (!linkResult || !linkResult.ok) return;
+    setMessage((prev) => (prev.trim() ? `${prev.trim()}\n${linkResult.address}` : linkResult.address));
+    setIsSample(false);
+    setShowValidation(false);
+    setActiveMode("text");
+  };
+
+  const ocrErrorText = (code: OcrErrorCode) =>
+    code === "unsupported"
+      ? t.input.ocr.errorType
+      : code === "too-large"
+      ? t.input.ocr.errorTooLarge
+      : code === "no-text"
+      ? t.input.ocr.errorNoText
+      : t.input.ocr.errorLoad;
 
   const errorMessage = isEmpty
     ? t.input.errorEmpty
@@ -423,6 +348,21 @@ export default function InvestigatePage() {
                         </p>
                       )}
 
+                      {ocrNotice && (
+                        <div
+                          role="status"
+                          className="mt-4 p-4 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/20 animate-fade-in"
+                        >
+                          <p className="text-[13px] font-medium text-cyan-400 mb-0.5">{t.input.ocr.doneTitle}</p>
+                          <p className="text-[12px] text-text-secondary leading-relaxed">{t.input.ocr.doneBody}</p>
+                          {ocrNotice.confidence < LOW_CONFIDENCE && (
+                            <p className="text-[12px] text-amber-400 mt-2">
+                              {format(t.input.ocr.lowConfidence, { percent: ocrNotice.confidence })}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {isSample && (
                         <div className="mt-4 p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20 animate-fade-in">
                           <div className="flex items-start gap-3">
@@ -444,7 +384,7 @@ export default function InvestigatePage() {
                   {/* ---------- SCREENSHOT ---------- */}
                   {activeMode === "screenshot" && (
                     <div
-                      className={cn("drop-zone p-10 sm:p-14 text-center", dragActive && "drag-active")}
+                      className={cn("drop-zone p-8 sm:p-14 text-center", dragActive && "drag-active")}
                       onDragEnter={handleDrag}
                       onDragLeave={handleDrag}
                       onDragOver={handleDrag}
@@ -453,110 +393,149 @@ export default function InvestigatePage() {
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        capture="environment"
+                        accept="image/*"
                         onChange={handleFileSelect}
                         className="hidden"
                         id="screenshot-upload"
                       />
-                      {ocrStatus === "processing" && (
-                        <div className="mb-5 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.05] p-4 text-left animate-fade-in">
-                          <div className="flex items-start gap-3">
-                            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/20 shrink-0">
-                              <ScanLine className="h-4 w-4 text-cyan-400 animate-pulse" aria-hidden="true" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[13px] font-semibold text-text-primary">Reading screenshot…</p>
-                              <p className="text-[12px] text-text-muted mt-0.5">OCR runs locally in your browser. No image upload is required.</p>
-                              <div className="mt-3 h-1.5 rounded-full bg-bg-surface overflow-hidden">
-                                <div className="h-full rounded-full bg-cyan-400 transition-all duration-200" style={{ width: `${Math.max(8, ocrProgress)}%` }} />
-                              </div>
-                              <p className="text-[10px] text-text-muted mt-1.5 font-mono">{ocrProgress}% extracted</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {ocrStatus === "success" && screenshotName && (
-                        <div className="mb-5 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4 text-left animate-fade-in">
-                          <div className="flex items-center gap-3">
-                            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                              <CheckCircle className="h-4 w-4 text-emerald-400" aria-hidden="true" />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-[13px] font-semibold text-text-primary">Screenshot text extracted</p>
-                              <p className="text-[12px] text-text-muted mt-0.5 truncate">{screenshotName}</p>
-                          <p className="text-[11px] text-emerald-300/80 mt-1">Text is now loaded into the investigation box for review.</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {ocrStatus === "error" && (
-                        <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 text-left animate-fade-in">
-                          <div className="flex items-start gap-3">
-                            <AlertCircle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" aria-hidden="true" />
-                            <div>
-                              <p className="text-[13px] font-semibold text-amber-400">We couldn&apos;t read text from this image.</p>
-                              <p className="text-[12px] text-text-secondary mt-1 leading-relaxed">Try a clearer screenshot, or switch to Text and paste the message manually.</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
 
-                      <label htmlFor="screenshot-upload" className="cursor-pointer block">
-                        {imagePreviewUrl ? (
-                          <span className="block max-w-md mx-auto mb-5 overflow-hidden rounded-xl border border-border-default bg-bg-surface">
-                            <img src={imagePreviewUrl} alt="Selected screenshot preview" className="w-full max-h-64 object-contain" />
-                          </span>
-                        ) : null}
-                        <span className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-bg-surface border border-border-subtle mb-5 transition-colors hover:border-cyan-500/40">
-                          <Upload className="w-6 h-6 text-text-tertiary" aria-hidden="true" />
-                        </span>
-                        <h3 className="heading-4 text-text-primary mb-2">{t.input.uploadScreenshot}</h3>
-                        <p className="body-base text-text-secondary mb-5 max-w-sm mx-auto">
-                          {t.input.screenshotHint}
-                        </p>
-                        <p className="text-[11px] text-text-muted mb-5">You can also drag an image here or paste a copied screenshot. Best results: clear text, high contrast, no heavy blur.</p>
-                        <span className="inline-flex items-center gap-2 px-4 py-3 rounded-lg bg-bg-card-hover border border-border-default text-text-primary text-sm font-medium min-h-[48px]">
-                          {t.input.chooseFile}
-                        </span>
-                      </label>
+                      {ocr.status === "working" ? (
+                        <div role="status" aria-live="polite">
+                          <Loader2 className="w-7 h-7 text-cyan-400 mx-auto mb-4 animate-spin" aria-hidden="true" />
+                          <p className="text-[14px] font-medium text-text-primary mb-3">
+                            {ocr.stage === "preparing"
+                              ? t.input.ocr.preparing
+                              : format(t.input.ocr.reading, { percent: Math.round(ocr.fraction * 100) })}
+                          </p>
+                          <div className="h-1.5 max-w-xs mx-auto rounded-full bg-bg-surface overflow-hidden">
+                            <div
+                              className="h-full bg-cyan-500 transition-[width] duration-200"
+                              style={{ width: `${ocr.stage === "reading" ? Math.max(4, Math.round(ocr.fraction * 100)) : 4}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {ocr.status === "error" && (
+                            <div role="alert" className="mb-6 p-4 rounded-xl bg-rose-500/[0.06] border border-rose-500/25 text-left">
+                              <p className="flex items-center gap-2 text-[13px] font-medium text-rose-400 mb-1">
+                                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                                {t.input.ocr.errorTitle}
+                              </p>
+                              <p className="text-[12px] text-text-secondary leading-relaxed mb-3">
+                                {ocrErrorText(ocr.code)}
+                              </p>
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                {ocr.code !== "unsupported" && ocr.code !== "too-large" && (
+                                  <Button type="button" variant="secondary" onClick={() => lastFile.current && void runOcr(lastFile.current)}>
+                                    {t.input.ocr.retry}
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setOcr({ status: "idle" });
+                                    setActiveMode("text");
+                                  }}
+                                >
+                                  {t.input.ocr.pasteInstead}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                          <label htmlFor="screenshot-upload" className="cursor-pointer block">
+                            <span className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-bg-surface border border-border-subtle mb-5 transition-colors hover:border-cyan-500/40">
+                              <Upload className="w-6 h-6 text-text-tertiary" aria-hidden="true" />
+                            </span>
+                            <h3 className="heading-4 text-text-primary mb-2">{t.input.uploadScreenshot}</h3>
+                            <p className="body-base text-text-secondary mb-5 max-w-sm mx-auto">
+                              {t.input.screenshotHint}
+                            </p>
+                            <span className="inline-flex items-center gap-2 px-4 py-3 rounded-lg bg-bg-card-hover border border-border-default text-text-primary text-sm font-medium min-h-[48px]">
+                              {t.input.chooseFile}
+                            </span>
+                          </label>
+                          <p className="mt-5 text-[12px] text-text-muted max-w-sm mx-auto">{t.input.ocr.languageNote}</p>
+                        </>
+                      )}
                     </div>
                   )}
 
-                  {/* ---------- URL ---------- */}
+                  {/* ---------- URL (link check) ---------- */}
                   {activeMode === "url" && (
-                    <div className="py-8 text-center">
-                      <span className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-cyan-500/[0.08] border border-cyan-500/20 mb-5">
-                        <Globe2 className="w-6 h-6 text-cyan-400" aria-hidden="true" />
-                      </span>
-                      <h3 className="heading-4 text-text-primary mb-2">{t.input.fetchFromUrl}</h3>
-                      <p className="body-base text-text-secondary mb-6 max-w-lg mx-auto">
-                        Extract readable page text on the server, then run the same explainable investigation engine. Pages requiring login or heavy JavaScript may not expose readable text.
-                      </p>
-                      <div className="max-w-xl mx-auto text-left">
-                        <label htmlFor="url-input" className="text-[13px] font-medium text-text-primary block mb-2">Web page URL</label>
-                        <div className="flex flex-col sm:flex-row gap-3">
-                          <input
-                            id="url-input"
-                            type="url"
-                            value={urlValue}
-                            onChange={(e) => { setUrlValue(e.target.value); setUrlStatus("idle"); setUrlError(""); }}
-                            placeholder="https://example.com/message"
-                            className="input flex-1"
-                            autoComplete="url"
-                          />
-                          <Button type="button" variant="secondary" onClick={handleUrlExtract} disabled={urlStatus === "fetching"} icon={urlStatus === "fetching" ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}>
-                            {urlStatus === "fetching" ? "Extracting…" : "Extract page"}
-                          </Button>
-                        </div>
-                        {urlStatus === "success" && (
-                          <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3.5 flex items-center gap-2.5 text-[12px] text-emerald-300">
-                            <CheckCircle className="w-4 h-4 shrink-0" aria-hidden="true" /> Page text extracted. Switch to the text view to review it before investigating.
-                          </div>
+                    <div className="py-6 sm:py-10">
+                      <div className="text-center">
+                        <span className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-bg-surface border border-border-subtle mb-5">
+                          <Link2 className="w-6 h-6 text-text-tertiary" aria-hidden="true" />
+                        </span>
+                        <h3 className="heading-4 text-text-primary mb-2">{t.input.fetchFromUrl}</h3>
+                        <p className="body-base text-text-secondary mb-2 max-w-sm mx-auto">{t.input.urlHint}</p>
+                        <p className="text-[12px] text-text-muted mb-6 max-w-sm mx-auto">{t.input.link.notOpened}</p>
+                      </div>
+                      <div className="max-w-md mx-auto">
+                        <label htmlFor="link-input" className="sr-only">{t.input.fetchFromUrl}</label>
+                        <input
+                          id="link-input"
+                          type="text"
+                          inputMode="url"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          value={linkInput}
+                          onChange={(e) => {
+                            setLinkInput(e.target.value);
+                            setLinkResult(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleLinkCheck(e);
+                          }}
+                          placeholder={t.input.link.placeholder}
+                          className="input mb-3"
+                        />
+                        <Button type="button" variant="secondary" fullWidth onClick={() => handleLinkCheck()}>
+                          {t.input.link.check}
+                        </Button>
+
+                        {linkResult && !linkResult.ok && (
+                          <p role="alert" className="mt-3 flex items-start gap-2 text-[13px] text-rose-400 animate-fade-in">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                            {linkResult.reason === "empty" ? t.input.link.errorEmpty : t.input.link.errorInvalid}
+                          </p>
                         )}
-                        {urlStatus === "error" && (
-                          <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/[0.05] p-3.5 flex items-start gap-2.5 text-[12px] text-rose-300">
-                            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> {urlError}
+
+                        {linkResult && linkResult.ok && (
+                          <div className="mt-5 animate-fade-in" role="status">
+                            <p className="text-[13px] font-semibold text-text-primary mb-1">{t.input.link.resultTitle}</p>
+                            <p className="font-mono text-[12px] text-text-muted break-all mb-3">{linkResult.host}</p>
+                            {linkResult.findings.length === 0 ? (
+                              <p className="text-[13px] text-text-secondary leading-relaxed">{t.input.link.clean}</p>
+                            ) : (
+                              <ul className="space-y-2.5">
+                                {linkResult.findings.map((f) => {
+                                  const copy = t.input.link.findings[f.id];
+                                  return (
+                                    <li
+                                      key={f.id}
+                                      className={cn(
+                                        "p-3.5 rounded-xl border text-left",
+                                        f.severity === "warning"
+                                          ? "border-rose-500/25 bg-rose-500/[0.06]"
+                                          : f.severity === "caution"
+                                          ? "border-amber-500/25 bg-amber-500/[0.06]"
+                                          : "border-border-hairline bg-bg-surface/50"
+                                      )}
+                                    >
+                                      <p className="text-[13px] font-medium text-text-primary">{copy.title}</p>
+                                      <p className="text-[12px] text-text-secondary leading-relaxed mt-0.5">{copy.detail}</p>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                            <Button type="button" variant="ghost" fullWidth className="mt-4" onClick={addLinkToMessage}>
+                              {t.input.link.addToMessage}
+                            </Button>
                           </div>
                         )}
                       </div>

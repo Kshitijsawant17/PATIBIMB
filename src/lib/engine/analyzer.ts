@@ -92,8 +92,21 @@ export function analyzeMessage(
     // own English text rather than to an empty string.
     const copy = getPatternCopy(locale, pattern);
 
+    // The same words can be caught by an English rule and by a Hinglish/Hindi
+    // rule. Report each phrase once per tactic: rules run English-first, so the
+    // earlier (more precise) rule keeps the span and later overlaps are dropped.
+    const overlapsExisting = signals.some(
+      (existing) =>
+        existing.type === pattern.category &&
+        matchStart < existing.evidence.end &&
+        matchStart + phrase.length > existing.evidence.start
+    );
+    if (overlapsExisting) return;
+
+    const claimId = nextId("claim");
+
     claims.push({
-      id: nextId("claim"),
+      id: claimId,
       text: copy.claimText,
       category: pattern.category,
       severity: pattern.severity,
@@ -105,6 +118,7 @@ export function analyzeMessage(
     signals.push({
       id: nextId("signal"),
       ruleId: `R${String(index + 1).padStart(2, "0")}`,
+      claimId,
       type: pattern.category,
       severity: pattern.severity,
       phrase,

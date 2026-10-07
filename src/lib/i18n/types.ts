@@ -272,6 +272,46 @@ export interface Dictionary {
   };
 
   input: {
+    /** Screenshot reading, done on the device. */
+    ocr: {
+      preparing: string;
+      /** `{percent}` is substituted. */
+      reading: string;
+      doneTitle: string;
+      doneBody: string;
+      /** `{percent}` is substituted. */
+      lowConfidence: string;
+      errorTitle: string;
+      errorLoad: string;
+      errorNoText: string;
+      errorTooLarge: string;
+      errorType: string;
+      retry: string;
+      pasteInstead: string;
+      languageNote: string;
+      remove: string;
+    };
+    /** Link check: inspects the address only, never opens it. */
+    link: {
+      placeholder: string;
+      check: string;
+      notOpened: string;
+      resultTitle: string;
+      clean: string;
+      addToMessage: string;
+      errorEmpty: string;
+      errorInvalid: string;
+      findings: {
+        "ip-host": { title: string; detail: string };
+        "no-https": { title: string; detail: string };
+        "shortener": { title: string; detail: string };
+        "regulator-lookalike": { title: string; detail: string };
+        "userinfo-trick": { title: string; detail: string };
+        "punycode": { title: string; detail: string };
+        "invite-link": { title: string; detail: string };
+        "unusual-ending": { title: string; detail: string };
+      };
+    };
     demoBadge: string;
     normalBadge: string;
     title: string;
@@ -356,6 +396,33 @@ export interface Dictionary {
   };
 
   result: {
+    /** "What we know / don't know / what to verify": separates detected signals from verified fact. */
+    triad: {
+      title: string;
+      subtitle: string;
+      knowTitle: string;
+      knowNote: string;
+      dontKnowTitle: string;
+      dontKnowNote: string;
+      verifyTitle: string;
+      verifyNote: string;
+      /** `{count}`, `{plural}`, `{tactics}`, `{tacticPlural}` are substituted. */
+      signalsLine: string;
+      /** `{kind}` and `{value}` are substituted. */
+      statesLine: string;
+      /** What nobody can tell from the text alone, by tactic. */
+      unknowns: {
+        authority: string;
+        urgency: string;
+        "social-proof": string;
+        "unrealistic-outcome": string;
+        "guaranteed-language": string;
+        impersonation: string;
+        "payment-pressure": string;
+        "withdrawal-pressure": string;
+        sender: string;
+      };
+    };
     badge: string;
     noMatchTitle: string;
     /** `{count}` and `{plural}` are substituted. */

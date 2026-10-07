@@ -31,6 +31,7 @@ import Footer from "@/components/layout/Footer";
 import { useDemo } from "@/lib/demo/DemoContext";
 import { useT, format } from "@/lib/i18n/SettingsContext";
 import { PATTERNS } from "@/lib/engine/patterns";
+import { analyzeMessage } from "@/lib/engine/analyzer";
 import { REGIONAL_PATTERNS } from "@/lib/engine/regional-patterns";
 import { cn } from "@/lib/utils";
 
@@ -41,13 +42,23 @@ const RULE_COUNT = PATTERNS.length + REGIONAL_PATTERNS.length;
  * category, so the chips below carry the same names the rest of the app uses
  * and nothing on screen is invented for marketing.
  */
-const CONSOLE_ORDER = [
-  "urgency",
-  "guaranteed-language",
-  "social-proof",
-  "authority",
-  "payment-pressure",
+const HERO_LINES = [
+  { category: "authority", text: "SEBI approved opportunity." },
+  { category: "urgency", text: "Only 3 slots remaining. Invest before 6 PM." },
+  { category: "social-proof", text: "Thousands of investors are already earning." },
+  { category: "guaranteed-language", text: "Guaranteed 32% returns." },
 ] as const;
+
+/**
+ * The hero shows what the real engine finds in this fictional message. The
+ * categories are taken from running the engine, not hardcoded, so the page can
+ * never advertise a detection the tool does not make.
+ */
+const HERO_TEXT: Record<string, string> = Object.fromEntries(HERO_LINES.map((l) => [l.category, l.text]));
+const HERO_DETECTED = new Set<string>(
+  analyzeMessage(HERO_LINES.map((l) => l.text).join("\n")).signals.map((s) => s.type)
+);
+const CONSOLE_ORDER = HERO_LINES.map((l) => l.category).filter((c) => HERO_DETECTED.has(c));
 
 /** Colour per category. Reused from the shared map so a category looks the same everywhere. */
 const toneStyles: Record<string, string> = {
@@ -228,7 +239,7 @@ export default function LandingPage() {
                                   </span>
                                   <span className="min-w-0">
                                     <mark className={cn("rounded px-1 py-0.5 -mx-1", highlightStyles[category])}>
-                                      {t.landing.consoleLines[category]}
+                                      {HERO_TEXT[category]}
                                     </mark>
                                   </span>
                                 </li>

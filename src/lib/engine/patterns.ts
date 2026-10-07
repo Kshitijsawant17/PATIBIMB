@@ -205,7 +205,7 @@ export const PATTERNS: Pattern[] = [
 
   // Guaranteed language
   {
-    regex: /guaranteed?\s*(return|profit|income|outcome|result)/i,
+    regex: /guaranteed?\s*(?:(?:up\s*to\s*)?\d{1,3}(?:\.\d+)?\s*%\s*)?(?:return|profit|income|outcome|result)s?/i,
     category: "guaranteed-language",
     severity: "critical",
     claimText: "Guaranteed returns",
@@ -339,6 +339,19 @@ export const PATTERNS: Pattern[] = [
     explanation:
       "Processing fees to release funds are a hallmark of advance-fee fraud. The fees keep increasing.",
     verificationNeeded: "Legitimate investments do not charge processing fees for withdrawals",
+  },
+
+  // Scarcity ("Only 3 slots remaining"): a fixed count that creates a reason to act before checking.
+  {
+    regex: /only\s+(?:\d{1,3}|a\s+few|few|one|two|three|four|five)\s+(?:seats?|slots?|spots?|places?|vacanc(?:y|ies))(?:\s+(?:left|remaining|available|open))?/i,
+    category: "urgency",
+    severity: "medium",
+    claimText: "Only a few slots left",
+    copyKey: "only-a-few-slots-left",
+    explanation:
+      "A small, fixed number of 'slots' makes you feel you must decide before others do. Real investments are not sold like limited tickets, and the number cannot be checked by you.",
+    verificationNeeded:
+      "Ask why the number is limited and who counts it. If the answer is only 'hurry', treat the limit as pressure, not information.",
   },
 ];
 
