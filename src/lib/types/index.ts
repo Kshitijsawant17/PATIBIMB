@@ -41,8 +41,6 @@ export interface Signal {
   id: string;
   /** Stable-in-this-engine rule identifier shown in the explanation. */
   ruleId: string;
-  /** The claim created from the same rule match, so screens never have to guess the pairing. */
-  claimId: string;
   type: ClaimCategory;
   severity: Severity;
   phrase: string;

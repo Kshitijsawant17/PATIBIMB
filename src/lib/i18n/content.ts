@@ -120,24 +120,6 @@ export function getRecoveryTimelineCopy(
   return CONTENT[locale]?.recoveryTimeline?.[eventId] || fallback;
 }
 
-/** Localised name of a teach-back reasoning pattern, falling back to the English name. */
-export function getTeachbackLabel(
-  locale: Locale,
-  category: string,
-  fallback: string
-): string {
-  return CONTENT[locale]?.teachback?.labels?.[category] || fallback;
-}
-
-/** Localised self-check question, falling back to the English text. */
-export function getTeachbackChecklistText(
-  locale: Locale,
-  itemId: string,
-  fallback: string
-): string {
-  return CONTENT[locale]?.teachback?.checklist?.[itemId] || fallback;
-}
-
 /** Total number of rule descriptions a locale translates. */
 export function countPatternTranslations(locale: Locale): number {
   return Object.keys(CONTENT[locale]?.patterns ?? {}).length;

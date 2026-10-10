@@ -21,7 +21,6 @@ import { Badge } from "@/components/ui/Badge";
 import Reveal from "@/components/ui/Reveal";
 import { EvidenceQuote } from "@/components/analysis/EvidenceQuote";
 import { RiskBreakdown } from "@/components/analysis/RiskBreakdown";
-import KnowledgeTriad from "@/components/analysis/KnowledgeTriad";
 import { AnalysisSkeleton } from "@/components/analysis/AnalysisStates";
 import ReadAloudButton from "@/components/voice/ReadAloudButton";
 import Header from "@/components/layout/Header";
@@ -448,8 +447,8 @@ export default function ResultPage() {
 
                 <div className="space-y-3">
                   {analysis.signals.slice(0, 4).map((signal) => {
-                    const verification = analysis.claims.find(
-                      (c) => c.id === signal.claimId
+                    const verification = analysis.claims.find((c) =>
+                      c.text.toLowerCase().includes(signal.phrase.toLowerCase().slice(0, 12))
                     )?.verificationNeeded;
 
                     return (
@@ -474,13 +473,6 @@ export default function ResultPage() {
                   })}
                 </div>
               </section>
-            </Reveal>
-          )}
-
-          {/* ============ WHAT WE KNOW / DON'T KNOW / WHAT TO VERIFY ============ */}
-          {signalCount > 0 && (
-            <Reveal delay={210}>
-              <KnowledgeTriad analysis={analysis} />
             </Reveal>
           )}
 

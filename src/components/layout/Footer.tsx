@@ -17,7 +17,6 @@ export default function Footer() {
     { label: t.teachback.title, href: "/teachback" },
     { label: t.resilience.title, href: "/resilience" },
     { label: t.recovery.badge, href: "/recovery" },
-    { label: "How it's built", href: "/about" },
   ];
 
   const helpLinks = [
